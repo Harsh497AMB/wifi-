@@ -1,0 +1,175 @@
+### ===================================================================
+### Indoor Wi-Fi Heatmap Backend - Sample HTTP Requests
+### Compatible with VS Code REST Client, Thunder Client, Postman, etc.
+### ===================================================================
+
+@baseUrl = http://localhost:5000
+
+### 1. Health Check & API Overview
+GET {{baseUrl}}/
+Accept: application/json
+
+### -------------------------------------------------------------------
+### 2. POST /createBlock
+### Creates a new block with lat, lon, block name, and floor map image
+### -------------------------------------------------------------------
+POST {{baseUrl}}/createBlock
+Content-Type: multipart/form-data; boundary=----WebKitFormBoundary7MA4YWxkTrZu0gW
+
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="blockName"
+
+Floor 1 - Main Wing
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="lat"
+
+37.774929
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="lon"
+
+-122.419416
+------WebKitFormBoundary7MA4YWxkTrZu0gW
+Content-Disposition: form-data; name="blockImage"; filename="floor_map.png"
+Content-Type: image/png
+
+< ./tests/sample_floor_plan.png
+------WebKitFormBoundary7MA4YWxkTrZu0gW--
+
+### -------------------------------------------------------------------
+### 3. POST /calibrateBlock (Floor Plan Scale Calibration)
+### Sets reference distance: 200px on image = 10 meters in real life
+### -------------------------------------------------------------------
+POST {{baseUrl}}/calibrateBlock
+Content-Type: application/json
+
+{
+  "blockName": "Floor 1 - Main Wing",
+  "pointA": { "x": 100, "y": 150 },
+  "pointB": { "x": 300, "y": 150 },
+  "realDistanceMeters": 10
+}
+
+### -------------------------------------------------------------------
+### 4. POST /calculateDistance (Real-World Distance Between Any Two Points)
+### -------------------------------------------------------------------
+POST {{baseUrl}}/calculateDistance
+Content-Type: application/json
+
+{
+  "blockName": "Floor 1 - Main Wing",
+  "pointA": { "x": 100, "y": 150 },
+  "pointB": { "x": 500, "y": 150 }
+}
+
+### -------------------------------------------------------------------
+### 5. POST /addblock
+### Assigns an indoor block to a Wi-Fi (takes wifi ssid and indoor block id)
+### -------------------------------------------------------------------
+POST {{baseUrl}}/addblock
+Content-Type: application/json
+
+{
+  "ssid": "Office_5G",
+  "blockName": "Floor 1 - Main Wing",
+  "band": "5GHz",
+  "width": "80MHz",
+  "security": "WPA2-PSK"
+}
+
+### -------------------------------------------------------------------
+### 6. POST /SSID/block
+### Records user manual coordinate measurement with signal strength (dBm)
+### -------------------------------------------------------------------
+POST {{baseUrl}}/SSID/block
+Content-Type: application/json
+
+{
+  "ssid": "Office_5G",
+  "blockName": "Floor 1 - Main Wing",
+  "location": {
+    "lat": 37.774929,
+    "lon": -122.419416
+  },
+  "coordinates": {
+    "x": 3,
+    "y": 4
+  },
+  "strength": -58,
+  "band": "5GHz",
+  "security": "WPA2-PSK",
+  "estDistance": 4.2
+}
+
+### -------------------------------------------------------------------
+### 7. POST /SSID/block (Additional Measurement Point)
+### -------------------------------------------------------------------
+POST {{baseUrl}}/SSID/block
+Content-Type: application/json
+
+{
+  "ssid": "Office_5G",
+  "blockName": "Floor 1 - Main Wing",
+  "coordinates": {
+    "x": 7,
+    "y": 2
+  },
+  "strength": -72,
+  "band": "5GHz",
+  "security": "WPA2-PSK",
+  "estDistance": 9.5
+}
+
+### -------------------------------------------------------------------
+### 8. GET /SSID/block (Without cached image -> sends Base64 floor image)
+### -------------------------------------------------------------------
+GET {{baseUrl}}/SSID/block?ssid=Office_5G&blockName=Floor%201%20-%20Main%20Wing&hasImage=false
+Accept: application/json
+
+### -------------------------------------------------------------------
+### 9. GET /SSID/block (With cached image -> omits Base64 image)
+### -------------------------------------------------------------------
+GET {{baseUrl}}/SSID/block?ssid=Office_5G&blockName=Floor%201%20-%20Main%20Wing&hasImage=true
+Accept: application/json
+
+### -------------------------------------------------------------------
+### 10. GET /Office_5G/block (Dynamic Route Param Variant)
+### -------------------------------------------------------------------
+GET {{baseUrl}}/Office_5G/block?blockName=Floor%201%20-%20Main%20Wing
+Accept: application/json
+
+### -------------------------------------------------------------------
+### 11. GET /blocks (List all indoor blocks or search nearby)
+### -------------------------------------------------------------------
+GET {{baseUrl}}/blocks
+Accept: application/json
+
+### -------------------------------------------------------------------
+### 12. GET /wifis (List all Wi-Fi networks and their assigned blocks)
+### -------------------------------------------------------------------
+GET {{baseUrl}}/wifis
+Accept: application/json
+
+### -------------------------------------------------------------------
+### 13. POST /delete (Option A: Delete block from a specific Wi-Fi)
+### -------------------------------------------------------------------
+POST {{baseUrl}}/delete
+Content-Type: application/json
+
+{
+  "ssid": "Office_5G",
+  "blockName": "Floor 1 - Main Wing",
+  "lat": 37.774929,
+  "lon": -122.419416
+}
+
+### -------------------------------------------------------------------
+### 14. POST /delete (Option B: Delete block globally from all records)
+### -------------------------------------------------------------------
+POST {{baseUrl}}/delete
+Content-Type: application/json
+
+{
+  "blockName": "Floor 1 - Main Wing",
+  "lat": 37.774929,
+  "lon": -122.419416
+}
