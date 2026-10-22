@@ -62,22 +62,22 @@ Content-Type: application/json
 }
 
 ### -------------------------------------------------------------------
-### 5. POST /addWifi
-### Adds a Wi-Fi network configuration to an existing block
+### 5. POST /addblock
+### Assigns an indoor block to a Wi-Fi (takes wifi ssid and indoor block id)
 ### -------------------------------------------------------------------
-POST {{baseUrl}}/addWifi
+POST {{baseUrl}}/addblock
 Content-Type: application/json
 
 {
-  "blockName": "Floor 1 - Main Wing",
   "ssid": "Office_5G",
+  "blockName": "Floor 1 - Main Wing",
   "band": "5GHz",
   "width": "80MHz",
   "security": "WPA2-PSK"
 }
 
 ### -------------------------------------------------------------------
-### 4. POST /SSID/block
+### 6. POST /SSID/block
 ### Records user manual coordinate measurement with signal strength (dBm)
 ### -------------------------------------------------------------------
 POST {{baseUrl}}/SSID/block
@@ -101,7 +101,7 @@ Content-Type: application/json
 }
 
 ### -------------------------------------------------------------------
-### 5. POST /SSID/block (Additional Measurement Point)
+### 7. POST /SSID/block (Additional Measurement Point)
 ### -------------------------------------------------------------------
 POST {{baseUrl}}/SSID/block
 Content-Type: application/json
@@ -120,32 +120,50 @@ Content-Type: application/json
 }
 
 ### -------------------------------------------------------------------
-### 6. GET /SSID/block (Without cached image -> sends Base64 floor image)
+### 8. GET /SSID/block (Without cached image -> sends Base64 floor image)
 ### -------------------------------------------------------------------
 GET {{baseUrl}}/SSID/block?ssid=Office_5G&blockName=Floor%201%20-%20Main%20Wing&hasImage=false
 Accept: application/json
 
 ### -------------------------------------------------------------------
-### 7. GET /SSID/block (With cached image -> omits Base64 image)
+### 9. GET /SSID/block (With cached image -> omits Base64 image)
 ### -------------------------------------------------------------------
 GET {{baseUrl}}/SSID/block?ssid=Office_5G&blockName=Floor%201%20-%20Main%20Wing&hasImage=true
 Accept: application/json
 
 ### -------------------------------------------------------------------
-### 8. GET /Office_5G/block (Dynamic Route Param Variant)
+### 10. GET /Office_5G/block (Dynamic Route Param Variant)
 ### -------------------------------------------------------------------
 GET {{baseUrl}}/Office_5G/block?blockName=Floor%201%20-%20Main%20Wing
 Accept: application/json
 
 ### -------------------------------------------------------------------
-### 9. GET /blocks (List all blocks or search nearby)
+### 11. GET /blocks (List all indoor blocks or search nearby)
 ### -------------------------------------------------------------------
 GET {{baseUrl}}/blocks
 Accept: application/json
 
 ### -------------------------------------------------------------------
-### 10. POST /delete
-### Deletes the block, its Wi-Fis, and removes the local image file
+### 12. GET /wifis (List all Wi-Fi networks and their assigned blocks)
+### -------------------------------------------------------------------
+GET {{baseUrl}}/wifis
+Accept: application/json
+
+### -------------------------------------------------------------------
+### 13. POST /delete (Option A: Delete block from a specific Wi-Fi)
+### -------------------------------------------------------------------
+POST {{baseUrl}}/delete
+Content-Type: application/json
+
+{
+  "ssid": "Office_5G",
+  "blockName": "Floor 1 - Main Wing",
+  "lat": 37.774929,
+  "lon": -122.419416
+}
+
+### -------------------------------------------------------------------
+### 14. POST /delete (Option B: Delete block globally from all records)
 ### -------------------------------------------------------------------
 POST {{baseUrl}}/delete
 Content-Type: application/json

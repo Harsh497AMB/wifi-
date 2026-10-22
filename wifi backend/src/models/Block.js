@@ -2,73 +2,6 @@ const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
 const { get10mGridKey } = require('../utils/locationHelper');
 
-// Measurement Schema: User manual coordinate input with Wi-Fi signal strength
-const MeasurementSchema = new mongoose.Schema({
-  x: {
-    type: Number,
-    required: true
-  },
-  y: {
-    type: Number,
-    required: true
-  },
-  strength: {
-    type: Number, // In dBm, e.g. -65
-    required: true
-  },
-  band: {
-    type: String,
-    default: null
-  },
-  security: {
-    type: String,
-    default: null
-  },
-  estDistance: {
-    type: Number, // Estimated distance in meters
-    default: null
-  },
-  timestamp: {
-    type: Date,
-    default: Date.now
-  }
-}, { _id: false });
-
-// Wifi Schema: Individual Wi-Fi network registered within a block
-const WifiSchema = new mongoose.Schema({
-  ssid: {
-    type: String,
-    required: true,
-    trim: true
-  },
-  band: {
-    type: String, // e.g., '2.4GHz', '5GHz', '6GHz'
-    default: '2.4GHz'
-  },
-  width: {
-    type: String, // e.g., '20MHz', '40MHz', '80MHz', '160MHz'
-    default: '20MHz'
-  },
-  security: {
-    type: String, // e.g., 'WPA2-PSK', 'WPA3', 'Open'
-    default: 'WPA2'
-  },
-  estDistance: {
-    type: Number,
-    default: null
-  },
-  measurements: [MeasurementSchema],
-  // Optional precomputed or custom 2D matrix
-  rawMatrix: {
-    type: Array,
-    default: []
-  },
-  lastUpdated: {
-    type: Date,
-    default: Date.now
-  }
-});
-
 // Block Schema: Indoor floor plan and area representation
 const BlockSchema = new mongoose.Schema({
   blockId: {
@@ -140,8 +73,7 @@ const BlockSchema = new mongoose.Schema({
       type: Boolean,
       default: false
     }
-  },
-  wifis: [WifiSchema]
+  }
 }, {
   timestamps: true
 });
@@ -152,7 +84,7 @@ BlockSchema.index({ 'location.lat': 1, 'location.lon': 1 });
 BlockSchema.index({ blockName: 1 });
 
 // Pre-save hook to populate geo coordinates & 10m grid key
-BlockSchema.pre('save', function (next) {
+BlockSchema.pre('save', function () {
   if (this.isModified('location.lat') || this.isModified('location.lon') || !this.location.gridKey) {
     const lat = this.location.lat;
     const lon = this.location.lon;
@@ -162,7 +94,6 @@ BlockSchema.pre('save', function (next) {
       coordinates: [lon, lat] // Mongo GeoJSON uses [longitude, latitude]
     };
   }
-  next();
 });
 
 module.exports = mongoose.model('Block', BlockSchema);

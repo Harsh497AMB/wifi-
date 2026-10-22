@@ -1,32 +1,32 @@
 # Indoor Wi-Fi Heatmap Backend (Node.js & Express)
 
-A specialized Node.js + Express backend for indoor Wi-Fi heatmap mobile applications. This backend manages indoor floor maps, registers Wi-Fi access points per indoor block, receives user coordinate signal readings (dBm), and serves dynamic heatmap matrices with client-side image caching support.
+A specialized Node.js + Express backend for indoor Wi-Fi heatmap mobile applications. This backend manages indoor floor maps, stores indoor blocks within Wi-Fi networks, receives user coordinate signal readings (dBm), and serves dynamic heatmap matrices with client-side image caching support.
 
 ---
 
 ## 🏗️ Architecture & Database Design (MongoDB Atlas)
 
-The system organizes indoor spaces in a hierarchical model:
+### Updated Database Schema: Indoor Blocks Stored Inside Wi-Fi
+In this updated architecture, **indoor blocks are stored directly within each Wi-Fi network**:
 
 ```
-Location (lat, lon) [~10m GPS accuracy grid]
-  └── Indoor Blocks (Floor map image saved locally via Multer)
-        ├── Block ID (Unique identifier)
-        ├── Block Name
-        ├── Location & GeoJSON 2dsphere index
-        ├── Local image metadata & static URL
-        └── Wi-Fis in this Block
-              ├── SSID (e.g. "Office_5G")
-              ├── Band (e.g. "5GHz", "2.4GHz")
-              ├── Width (e.g. "80MHz", "40MHz")
-              ├── Security (e.g. "WPA2-PSK", "WPA3")
-              ├── Est. Distance (meters)
-              └── Measurements (User manual coordinate inputs)
-                    ├── x (floor plan coordinate)
-                    ├── y (floor plan coordinate)
-                    ├── strength (signal in dBm, e.g. -55 dBm)
-                    └── Matrix (generated 2D grid matrix of signal strengths)
+Wi-Fi Network (SSID e.g. "Office_5G", band, security, width)
+  └── Indoor Blocks assigned to this Wi-Fi
+        ├── Block ID (Unique identifier, e.g. "block_4a3b1c8f90de")
+        ├── Block Name (e.g. "Floor 1 - Main Wing")
+        ├── Location (lat, lon, ~10m GPS accuracy gridKey, GeoJSON Point)
+        ├── Block Image (stored locally via Multer in ./uploads/blocks/, static URL)
+        ├── Scale / Calibration (metersPerPixel, reference points)
+        ├── Measurements (Array of user manual coordinate inputs)
+        │     ├── x (floor plan coordinate)
+        │     ├── y (floor plan coordinate)
+        │     ├── strength (signal in dBm, e.g. -55 dBm)
+        │     ├── band, security, estDistance
+        │     └── timestamp
+        └── Matrix (dynamically generated 2D grid matrix of signal strengths)
 ```
+
+Additionally, master indoor floor maps are registered in the `Block` collection upon creation via `POST /createBlock`, allowing multiple Wi-Fi networks to reference and attach the same physical indoor block.
 
 ---
 
@@ -79,7 +79,7 @@ Creates a new indoor block, assigns a unique `blockId`, and saves the uploaded f
 - **Method**: `POST`
 - **Content-Type**: `multipart/form-data`
 - **Fields**:
-  - `blockName`: Name of the indoor block/floor (string, e.g. `"Building A - 2nd Floor"`)
+  - `blockName`: Name of the indoor block/floor (string, e.g. `"Floor 1 - Main Wing"`)
   - `lat`: GPS latitude (number, e.g. `37.774929`)
   - `lon`: GPS longitude (number, e.g. `-122.419416`)
   - `blockImage`: Floor plan image file (`.png`, `.jpg`, `.jpeg`, `.webp`, `.svg`)
@@ -91,7 +91,7 @@ Creates a new indoor block, assigns a unique `blockId`, and saves the uploaded f
   "message": "Block created successfully",
   "block": {
     "blockId": "block_4a3b1c8f90de",
-    "blockName": "Building A - 2nd Floor",
+    "blockName": "Floor 1 - Main Wing",
     "location": {
       "lat": 37.774929,
       "lon": -122.419416,
@@ -105,115 +105,57 @@ Creates a new indoor block, assigns a unique `blockId`, and saves the uploaded f
       "metersPerPixel": null,
       "isCalibrated": false
     },
-    "wifis": [],
-    "createdAt": "2026-10-19T09:30:00.000Z"
+    "createdAt": "2026-10-21T09:30:00.000Z"
   }
 }
 ```
 
 ---
 
-### 2. `POST /calibrateBlock` (Floor Plan Scale Calibration)
-Calibrates the scale between the uploaded floor map image and physical real-world meters.
-Users can tap two points on their mobile screen, input the real-world distance (e.g. 10m), and the server calculates `metersPerPixel`.
+### 2. `POST /addblock`
+Assigns an existing indoor block to a Wi-Fi network.
 
 - **Method**: `POST`
 - **Content-Type**: `application/json`
 - **Body**:
 ```json
 {
-  "blockId": "block_4a3b1c8f90de",
-  "pointA": { "x": 100, "y": 150 },
-  "pointB": { "x": 300, "y": 150 },
-  "realDistanceMeters": 10
-}
-```
-*(Or send `"metersPerPixel": 0.05` directly)*
-
-**Response (`200 OK`):**
-```json
-{
-  "success": true,
-  "message": "Block floor map scale calibrated successfully",
-  "blockId": "block_4a3b1c8f90de",
-  "blockName": "Building A - 2nd Floor",
-  "scale": {
-    "metersPerPixel": 0.05,
-    "referencePixelDistance": 200,
-    "referenceRealDistanceMeters": 10,
-    "isCalibrated": true
-  }
-}
-```
-
----
-
-### 3. `POST /calculateDistance`
-Calculates the real-world distance in physical meters between any two points on the floor map.
-
-- **Method**: `POST`
-- **Content-Type**: `application/json`
-- **Body**:
-```json
-{
-  "blockId": "block_4a3b1c8f90de",
-  "pointA": { "x": 100, "y": 150 },
-  "pointB": { "x": 500, "y": 150 }
-}
-```
-
-**Response (`200 OK`):**
-```json
-{
-  "success": true,
-  "blockId": "block_4a3b1c8f90de",
-  "isCalibrated": true,
-  "pixelDistance": 400,
-  "metersPerPixel": 0.05,
-  "realDistanceMeters": 20.0
-}
-```
-
----
-
-### 4. `POST /addWifi`
-Adds a Wi-Fi network configuration to an existing block.
-
-- **Method**: `POST`
-- **Content-Type**: `application/json`
-- **Body**:
-```json
-{
-  "blockId": "block_4a3b1c8f90de",
   "ssid": "Office_5G",
+  "blockId": "block_4a3b1c8f90de",
   "band": "5GHz",
   "width": "80MHz",
   "security": "WPA2-PSK"
 }
 ```
-*(You can also identify the block using `"blockName"` and `"location"` `{ lat, lon }` instead of `blockId`)*
+*(Also supports identifying block via `"blockName"` and `"location"`)*
 
 **Response (`200 OK`):**
 ```json
 {
   "success": true,
-  "message": "Wi-Fi added to block successfully",
-  "blockId": "block_4a3b1c8f90de",
-  "blockName": "Building A - 2nd Floor",
-  "wifi": {
-    "ssid": "Office_5G",
-    "band": "5GHz",
-    "width": "80MHz",
-    "security": "WPA2-PSK",
-    "measurementsCount": 0
-  }
+  "message": "Block assigned to Wi-Fi successfully",
+  "ssid": "Office_5G",
+  "block": {
+    "blockId": "block_4a3b1c8f90de",
+    "blockName": "Floor 1 - Main Wing",
+    "location": {
+      "lat": 37.774929,
+      "lon": -122.419416,
+      "gridKey": "419389_-934502"
+    },
+    "blockImage": {
+      "filename": "block-1771407000-123456789.png",
+      "url": "http://localhost:5000/uploads/blocks/block-1771407000-123456789.png"
+    }
+  },
+  "totalBlocksInWifi": 1
 }
 ```
 
 ---
 
-### 5. `POST /SSID/block`
-Records a Wi-Fi signal measurement at manual `(x, y)` coordinates on the indoor floor map.
+### 3. `POST /SSID/block` (or `POST /:ssid/block`)
+Records a user manual coordinate measurement with signal strength (dBm) for a Wi-Fi network in an indoor block.
 
 - **Method**: `POST`
 - **Content-Type**: `application/json`
@@ -242,8 +184,9 @@ Records a Wi-Fi signal measurement at manual `(x, y)` coordinates on the indoor 
 {
   "success": true,
   "message": "Measurement recorded successfully",
+  "ssid": "Office_5G",
   "blockId": "block_4a3b1c8f90de",
-  "blockName": "Building A - 2nd Floor",
+  "blockName": "Floor 1 - Main Wing",
   "wifi": {
     "ssid": "Office_5G",
     "band": "5GHz",
@@ -256,7 +199,7 @@ Records a Wi-Fi signal measurement at manual `(x, y)` coordinates on the indoor 
       "band": "5GHz",
       "security": "WPA2-PSK",
       "estDistance": 3.8,
-      "timestamp": "2026-10-19T09:35:10.000Z"
+      "timestamp": "2026-10-21T09:35:10.000Z"
     },
     "totalMeasurements": 1,
     "matrix": [
@@ -274,55 +217,33 @@ Records a Wi-Fi signal measurement at manual `(x, y)` coordinates on the indoor 
 
 ---
 
-### 6. `GET /SSID/block` (or `GET /:ssid/block`)
-Retrieves the 2D signal strength matrix, Wi-Fi parameters, and the floor map image if not already cached on the user's mobile device.
+### 4. `GET /SSID/block` (or `GET /:ssid/block`)
+Returns the 2D signal strength matrix of the Wi-Fi in that particular block, related terms, and sends the floor map image if not available in client cache/storage.
 
 - **Method**: `GET`
-- **URL Options**:
+- **URL Parameters / Query**:
   - `GET /SSID/block?ssid=Office_5G&blockId=block_4a3b1c8f90de`
   - `GET /Office_5G/block?blockId=block_4a3b1c8f90de`
-  - `GET /SSID/block?ssid=Office_5G&lat=37.774929&lon=-122.419416&blockName=Building%20A`
+  - `GET /SSID/block?ssid=Office_5G&lat=37.774929&lon=-122.419416`
 
-#### How Image Caching Works:
+#### Image Caching Mechanism:
 1. **If user does NOT have the image** (default or `?hasImage=false`):
-   - The response includes `image.floorImage.base64` directly so the mobile app gets the image instantly in one request.
-2. **If user HAS the image cached** (`?hasImage=true` or sends header `If-None-Match: "block-filename.png"`):
-   - `floorImage` base64 is set to `null` to conserve bandwidth and battery. The app uses its local cached image.
-   - The app can also download or cache the image directly via the permanent URL `image.url` or `/block/:blockId/image` which supports standard HTTP `304 Not Modified` headers.
+   - Returns base64 floor image in `block.image.floorImage.base64` so mobile apps display the image immediately.
+2. **If user HAS the image cached** (`?hasImage=true` or header `If-None-Match`):
+   - `floorImage` is `null`, saving mobile data and bandwidth.
+   - Apps can also download image via `image.url` or `/block/:blockId/image` (HTTP 304 caching supported).
 
-**Sample Response (`200 OK`):**
+**Response (`200 OK`):**
 ```json
 {
   "success": true,
-  "block": {
-    "blockId": "block_4a3b1c8f90de",
-    "blockName": "Building A - 2nd Floor",
-    "location": {
-      "lat": 37.774929,
-      "lon": -122.419416,
-      "gridKey": "419389_-934502"
-    },
-    "scale": {
-      "metersPerPixel": 0.05,
-      "isCalibrated": true
-    },
-    "image": {
-      "filename": "block-1771407000-123456789.png",
-      "url": "http://localhost:5000/uploads/blocks/block-1771407000-123456789.png",
-      "isCachedOnClient": false,
-      "floorImage": {
-        "mimetype": "image/png",
-        "base64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
-      }
-    }
-  },
   "wifi": {
     "ssid": "Office_5G",
     "band": "5GHz",
     "width": "80MHz",
     "security": "WPA2-PSK",
     "estDistance": 3.8,
-    "lastUpdated": "2026-10-19T09:35:10.000Z",
+    "lastUpdated": "2026-10-21T09:35:10.000Z",
     "stats": {
       "totalPoints": 1,
       "minStrengthDbm": -62,
@@ -342,30 +263,53 @@ Retrieves the 2D signal strength matrix, Wi-Fi parameters, and the floor map ima
         "band": "5GHz",
         "security": "WPA2-PSK",
         "estDistance": 3.8,
-        "timestamp": "2026-10-19T09:35:10.000Z"
+        "timestamp": "2026-10-21T09:35:10.000Z"
       }
     ]
+  },
+  "block": {
+    "blockId": "block_4a3b1c8f90de",
+    "blockName": "Floor 1 - Main Wing",
+    "location": {
+      "lat": 37.774929,
+      "lon": -122.419416,
+      "gridKey": "419389_-934502"
+    },
+    "scale": {
+      "metersPerPixel": 0.05,
+      "isCalibrated": true
+    },
+    "image": {
+      "filename": "block-1771407000-123456789.png",
+      "url": "http://localhost:5000/uploads/blocks/block-1771407000-123456789.png",
+      "isCachedOnClient": false,
+      "floorImage": {
+        "mimetype": "image/png",
+        "base64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+      }
+    }
   }
 }
 ```
 
 ---
 
-### 7. `POST /delete`
-Deletes an existing block, its uploaded floor map image from disk, and all associated Wi-Fi networks.
+### 5. `POST /delete`
+Deletes an existing block in a Wi-Fi (if `ssid` provided), or deletes the block globally and removes it from all Wi-Fi records and disk.
 
 - **Method**: `POST`
 - **Content-Type**: `application/json`
-- **Body Option A (by `blockId`):**
+- **Option A (Remove block from a specific Wi-Fi)**:
 ```json
 {
+  "ssid": "Office_5G",
   "blockId": "block_4a3b1c8f90de"
 }
 ```
-- **Body Option B (by location & name):**
+- **Option B (Delete block by location & blockId / blockName)**:
 ```json
 {
-  "blockName": "Building A - 2nd Floor",
+  "blockId": "block_4a3b1c8f90de",
   "lat": 37.774929,
   "lon": -122.419416
 }
@@ -375,21 +319,28 @@ Deletes an existing block, its uploaded floor map image from disk, and all assoc
 ```json
 {
   "success": true,
-  "message": "Block 'Building A - 2nd Floor' (ID: block_4a3b1c8f90de) and its Wi-Fi records deleted successfully"
+  "message": "Block 'Floor 1 - Main Wing' (ID: block_4a3b1c8f90de) removed from Wi-Fi 'Office_5G' successfully",
+  "ssid": "Office_5G",
+  "remainingBlocks": 0
 }
 ```
 
 ---
 
-### Additional Helper Endpoints
-- `GET /` — API health check and routes index.
-- `GET /blocks?lat=...&lon=...&radius=50` — List all blocks or find nearby blocks within 10-50m.
-- `GET /block/:blockId` — Full block details.
-- `GET /block/:blockId/image` — Direct floor map image streaming with `Cache-Control` and `ETag`.
+### 6. Additional Floor Map Features
+- **`POST /calibrateBlock`**: Calibrate pixel-to-meter scale using 2 reference points or ratio.
+- **`POST /calculateDistance`**: Compute real-world distance in meters between any 2 coordinates on a floor plan.
+- **`GET /blocks`**: List all floor map blocks or search nearby within 10m-50m radius.
+- **`GET /block/:blockId`**: Full block details including all Wi-Fis covering that block.
+- **`GET /block/:blockId/image`**: Direct streaming of floor map image with `ETag` and `304 Not Modified` caching.
+- **`GET /wifis`**: List all Wi-Fi networks and their assigned indoor blocks.
+- **`GET /wifi/:ssid`**: Full details of a specific Wi-Fi and its blocks.
 
 ---
 
 ## 🧪 Testing
-- Run test suite: `npm test`
-- Interactive HTTP requests: Open `test-requests.http` in VS Code / REST Client / Thunder Client.
-
+```bash
+# Run automated Node.js test suite
+npm test
+```
+All tests verify route contracts, validation handling, distance calculations, 10m grid quantization, and matrix generation.

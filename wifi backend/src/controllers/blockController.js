@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const Block = require('../models/Block');
+const Wifi = require('../models/Wifi');
 const { get10mGridKey, getHaversineDistance } = require('../utils/locationHelper');
-const { build2DMatrix } = require('../utils/matrixHelper');
+const { uploadBuffer, deleteImage } = require('../config/cloudinary');
+const { ssidRegex } = require('../utils/stringHelper');
 const {
   calculatePixelDistance,
   calibrateScaleFromPoints,
@@ -12,6 +14,7 @@ const {
 /**
  * POST /createBlock
  * Creates a new indoor block with floor map image and assigns unique id
+ * Accepts: blockName, lat, lon (or location), blockImage (file via multer)
  */
 exports.createBlock = async (req, res, next) => {
   try {
@@ -101,9 +104,8 @@ exports.createBlock = async (req, res, next) => {
       }
     }
 
-    const host = req.get('host');
-    const protocol = req.protocol;
-    const imageUrl = `${protocol}://${host}/uploads/blocks/${req.file.filename}`;
+    const uploaded = await uploadBuffer(req.file.buffer);
+    const imageUrl = uploaded.secure_url;
 
     const newBlock = new Block({
       blockName: resolvedBlockName,
@@ -117,15 +119,14 @@ exports.createBlock = async (req, res, next) => {
         }
       },
       blockImage: {
-        filename: req.file.filename,
-        path: req.file.path,
+        filename: uploaded.public_id,
+        path: uploaded.public_id,
         originalName: req.file.originalname,
         mimetype: req.file.mimetype,
         size: req.file.size,
         url: imageUrl
       },
-      scale: blockScale,
-      wifis: []
+      scale: blockScale
     });
 
     const savedBlock = await newBlock.save();
@@ -146,138 +147,63 @@ exports.createBlock = async (req, res, next) => {
           url: savedBlock.blockImage.url
         },
         scale: savedBlock.scale,
-        wifis: savedBlock.wifis,
         createdAt: savedBlock.createdAt
       }
     });
   } catch (error) {
-    // If error occurred and file was uploaded, clean up file
-    if (req.file && fs.existsSync(req.file.path)) {
-      try {
-        fs.unlinkSync(req.file.path);
-      } catch (err) {
-        console.error('Failed to cleanup file on error:', err);
-      }
-    }
     next(error);
   }
 };
 
 /**
- * POST /addWifi
- * Adds a new Wi-Fi or updates existing Wi-Fi configuration in an existing block
+ * POST /addblock (alias /addWifi)
+ * Assigns an indoor block to a Wi-Fi network
+ * req body: wifi ssid and the indoor block id
  */
-exports.addWifi = async (req, res, next) => {
+exports.addBlock = async (req, res, next) => {
   try {
-    const { blockId, blockName, location, lat, lon, ssid, band, width, security } = req.body;
+    const {
+      ssid,
+      wifiSsid,
+      wifi: wifiParam,
+      blockId,
+      indoorBlockId,
+      block_id,
+      blockName,
+      lat,
+      lon,
+      location,
+      band,
+      width,
+      security
+    } = req.body;
 
-    if (!ssid || !ssid.trim()) {
+    const resolvedSsid = (ssid || wifiSsid || wifiParam || '').trim();
+    const resolvedBlockId = (blockId || indoorBlockId || block_id || '').trim();
+
+    if (!resolvedSsid) {
       return res.status(400).json({
         success: false,
         message: 'SSID is required'
       });
     }
 
-    // Locate block by blockId or by (lat, lon, blockName)
-    let block = null;
-    if (blockId) {
-      block = await Block.findOne({ blockId });
-    } else {
-      let resolvedLat = lat ?? location?.lat;
-      let resolvedLon = lon ?? location?.lon;
+    if (!resolvedBlockId && !blockName && lat == null && location == null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Indoor block ID (blockId) is required'
+      });
+    }
 
-      if (blockName && resolvedLat != null && resolvedLon != null) {
-        const gridKey = get10mGridKey(resolvedLat, resolvedLon);
-        block = await Block.findOne({
-          blockName: blockName.trim(),
-          $or: [
-            { 'location.gridKey': gridKey },
-            {
-              'location.lat': { $gte: Number(resolvedLat) - 0.00015, $lte: Number(resolvedLat) + 0.00015 },
-              'location.lon': { $gte: Number(resolvedLon) - 0.00015, $lte: Number(resolvedLon) + 0.00015 }
-            }
-          ]
-        });
-      } else if (blockName) {
-        block = await Block.findOne({ blockName: blockName.trim() });
-      }
+    // Locate the master block
+    let block = null;
+    if (resolvedBlockId) {
+      block = await Block.findOne({ blockId: resolvedBlockId });
     }
 
     if (!block) {
-      return res.status(404).json({
-        success: false,
-        message: 'Block not found. Please provide a valid blockId or location and blockName.'
-      });
-    }
-
-    const trimmedSsid = ssid.trim();
-    // Check if Wi-Fi already exists in this block
-    const existingWifiIndex = block.wifis.findIndex(
-      (w) => w.ssid.toLowerCase() === trimmedSsid.toLowerCase()
-    );
-
-    if (existingWifiIndex !== -1) {
-      // Update existing Wi-Fi properties
-      if (band) block.wifis[existingWifiIndex].band = band;
-      if (width) block.wifis[existingWifiIndex].width = width;
-      if (security) block.wifis[existingWifiIndex].security = security;
-      block.wifis[existingWifiIndex].lastUpdated = new Date();
-    } else {
-      // Add new Wi-Fi
-      block.wifis.push({
-        ssid: trimmedSsid,
-        band: band || '2.4GHz',
-        width: width || '20MHz',
-        security: security || 'WPA2',
-        estDistance: null,
-        measurements: [],
-        rawMatrix: [],
-        lastUpdated: new Date()
-      });
-    }
-
-    await block.save();
-
-    const targetWifi = block.wifis.find(
-      (w) => w.ssid.toLowerCase() === trimmedSsid.toLowerCase()
-    );
-
-    return res.status(200).json({
-      success: true,
-      message: existingWifiIndex !== -1 ? 'Wi-Fi configuration updated' : 'Wi-Fi added to block successfully',
-      blockId: block.blockId,
-      blockName: block.blockName,
-      wifi: {
-        ssid: targetWifi.ssid,
-        band: targetWifi.band,
-        width: targetWifi.width,
-        security: targetWifi.security,
-        measurementsCount: targetWifi.measurements.length
-      }
-    });
-  } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * POST /delete
- * Deletes the existing block and all associated Wi-Fis for that block
- * Body accepts blockId OR (location(lat, lon), block name, [block image])
- */
-exports.deleteBlock = async (req, res, next) => {
-  try {
-    const { blockId, blockName, name, lat, lon, location, blockImage } = req.body;
-
-    let filter = {};
-
-    if (blockId) {
-      filter.blockId = blockId;
-    } else {
-      const resolvedName = (blockName || name || '').trim();
       let resolvedLat = lat;
       let resolvedLon = lon;
-
       if (location) {
         if (typeof location === 'string') {
           try {
@@ -291,53 +217,241 @@ exports.deleteBlock = async (req, res, next) => {
         }
       }
 
-      if (resolvedName) {
-        filter.blockName = resolvedName;
-      }
-
-      if (resolvedLat != null && resolvedLon != null) {
+      if (blockName && resolvedLat != null && resolvedLon != null) {
         const gridKey = get10mGridKey(resolvedLat, resolvedLon);
-        filter.$or = [
-          { 'location.gridKey': gridKey },
-          {
-            'location.lat': { $gte: Number(resolvedLat) - 0.00015, $lte: Number(resolvedLat) + 0.00015 },
-            'location.lon': { $gte: Number(resolvedLon) - 0.00015, $lte: Number(resolvedLon) + 0.00015 }
-          }
-        ];
-      }
-
-      if (blockImage) {
-        filter['blockImage.filename'] = path.basename(blockImage);
+        block = await Block.findOne({
+          blockName: blockName.trim(),
+          $or: [
+            { 'location.gridKey': gridKey },
+            {
+              'location.lat': { $gte: Number(resolvedLat) - 0.00015,$lte: Number(resolvedLat) + 0.00015 },
+              'location.lon': { $gte: Number(resolvedLon) - 0.00015,$lte: Number(resolvedLon) + 0.00015 }
+            }
+          ]
+        });
+      } else if (blockName) {
+        block = await Block.findOne({ blockName: blockName.trim() });
       }
     }
 
-    if (Object.keys(filter).length === 0) {
+    if (!block) {
+      return res.status(404).json({
+        success: false,
+        message: `Block not found. Please provide a valid blockId (or create one using POST /createBlock).`
+      });
+    }
+
+    // Find or create the Wi-Fi document
+    let wifi = await Wifi.findOne({
+      ssid: ssidRegex(resolvedSsid)
+    });
+
+    if (!wifi) {
+      wifi = new Wifi({
+        ssid: resolvedSsid,
+        band: band || '2.4GHz',
+        width: width || '20MHz',
+        security: security || 'WPA2',
+        blocks: []
+      });
+    } else {
+      if (band) wifi.band = band;
+      if (width) wifi.width = width;
+      if (security) wifi.security = security;
+    }
+
+    // Check if the block is already assigned to this Wi-Fi
+    const existingIndex = wifi.blocks.findIndex((b) => b.blockId === block.blockId);
+
+    if (existingIndex !== -1) {
+      await wifi.save();
+      return res.status(200).json({
+        success: true,
+        message: 'Block is already assigned to this Wi-Fi',
+        ssid: wifi.ssid,
+        block: {
+          blockId: wifi.blocks[existingIndex].blockId,
+          blockName: wifi.blocks[existingIndex].blockName,
+          measurementsCount: wifi.blocks[existingIndex].measurements.length
+        },
+        totalBlocksInWifi: wifi.blocks.length
+      });
+    }
+
+    // Assign the indoor block to the Wi-Fi
+    wifi.blocks.push({
+      blockId: block.blockId,
+      blockName: block.blockName,
+      location: {
+        lat: block.location.lat,
+        lon: block.location.lon,
+        gridKey: block.location.gridKey,
+        geo: block.location.geo
+      },
+      blockImage: block.blockImage,
+      scale: block.scale,
+      measurements: [],
+      rawMatrix: [],
+      addedAt: new Date(),
+      lastUpdated: new Date()
+    });
+
+    await wifi.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Block assigned to Wi-Fi successfully',
+      ssid: wifi.ssid,
+      block: {
+        blockId: block.blockId,
+        blockName: block.blockName,
+        location: {
+          lat: block.location.lat,
+          lon: block.location.lon,
+          gridKey: block.location.gridKey
+        },
+        blockImage: {
+          filename: block.blockImage.filename,
+          url: block.blockImage.url
+        }
+      },
+      totalBlocksInWifi: wifi.blocks.length
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * POST /delete
+ * Deletes the existing block in that Wi-Fi (if ssid specified),
+ * or deletes the block globally and from all associated Wi-Fis
+ * Accepts: location (lat, lon), block id, [ssid]
+ */
+exports.deleteBlock = async (req, res, next) => {
+  try {
+    const { blockId, indoorBlockId, blockName, name, lat, lon, location, ssid } = req.body;
+
+    const resolvedBlockId = (blockId || indoorBlockId || '').trim();
+    const resolvedName = (blockName || name || '').trim();
+
+    let resolvedLat = lat;
+    let resolvedLon = lon;
+    if (location) {
+      if (typeof location === 'string') {
+        try {
+          const parsed = JSON.parse(location);
+          resolvedLat = parsed.lat ?? parsed.latitude;
+          resolvedLon = parsed.lon ?? parsed.longitude;
+        } catch (e) {}
+      } else if (typeof location === 'object') {
+        resolvedLat = location.lat ?? location.latitude;
+        resolvedLon = location.lon ?? location.longitude;
+      }
+    }
+
+    if (!resolvedBlockId && !resolvedName && (resolvedLat == null || resolvedLon == null)) {
       return res.status(400).json({
         success: false,
         message: 'Must provide blockId or location (lat, lon) and blockName to delete'
       });
     }
 
+    // 1. If SSID is specified: remove the block from that specific Wi-Fi
+    if (ssid && ssid.trim()) {
+      const wifi = await Wifi.findOne({
+        ssid: ssidRegex(ssid)
+      });
+
+      if (!wifi) {
+        return res.status(404).json({
+          success: false,
+          message: `Wi-Fi with SSID '${ssid}' not found`
+        });
+      }
+
+      const blockIndex = wifi.blocks.findIndex((b) => {
+        if (resolvedBlockId && b.blockId === resolvedBlockId) return true;
+        if (resolvedLat != null && resolvedLon != null) {
+          const dist = getHaversineDistance(b.location.lat, b.location.lon, resolvedLat, resolvedLon);
+          if (dist <= 10) return true;
+        }
+        if (resolvedName && b.blockName.toLowerCase() === resolvedName.toLowerCase()) return true;
+        return false;
+      });
+
+      if (blockIndex === -1) {
+        return res.status(404).json({
+          success: false,
+          message: `Block not found in Wi-Fi '${wifi.ssid}'`
+        });
+      }
+
+      const removedBlock = wifi.blocks[blockIndex];
+      wifi.blocks.splice(blockIndex, 1);
+      await wifi.save();
+
+      return res.status(200).json({
+        success: true,
+        message: `Block '${removedBlock.blockName}' (ID: ${removedBlock.blockId}) removed from Wi-Fi '${wifi.ssid}' successfully`,
+        ssid: wifi.ssid,
+        remainingBlocks: wifi.blocks.length
+      });
+    }
+
+    // 2. If SSID is not specified: delete block globally and from all Wi-Fis
+    let filter = {};
+    if (resolvedBlockId) {
+      filter.blockId = resolvedBlockId;
+    } else {
+      if (resolvedName) filter.blockName = resolvedName;
+      if (resolvedLat != null && resolvedLon != null) {
+        const gridKey = get10mGridKey(resolvedLat, resolvedLon);
+        filter.$or = [
+          { 'location.gridKey': gridKey },
+          {
+            'location.lat': { $gte: Number(resolvedLat) - 0.00015,$lte: Number(resolvedLat) + 0.00015 },
+            'location.lon': { $gte: Number(resolvedLon) - 0.00015,$lte: Number(resolvedLon) + 0.00015 }
+          }
+        ];
+      }
+    }
+
     const block = await Block.findOne(filter);
 
     if (!block) {
+      // Check if block exists only in a Wi-Fi document
+      const wifiWithBlock = await Wifi.findOne({
+        'blocks.blockId': resolvedBlockId
+      });
+      if (wifiWithBlock) {
+        await Wifi.updateMany(
+          {},
+          { $pull: { blocks: { blockId: resolvedBlockId } } }
+        );
+        return res.status(200).json({
+          success: true,
+          message: `Block ID '${resolvedBlockId}' removed from all Wi-Fi records successfully`
+        });
+      }
+
       return res.status(404).json({
         success: false,
         message: 'Block not found matching specified criteria'
       });
     }
 
-    // Delete the local image file if present
-    if (block.blockImage && block.blockImage.path) {
-      try {
-        if (fs.existsSync(block.blockImage.path)) {
-          fs.unlinkSync(block.blockImage.path);
-        }
-      } catch (err) {
-        console.error('Error deleting block image file:', err.message);
-      }
-    }
+    const targetBlockId = block.blockId;
 
+    await deleteImage(block.blockImage?.filename);
+
+    // Remove this block from ALL Wi-Fi documents
+    await Wifi.updateMany(
+      {},
+      { $pull: { blocks: { blockId: targetBlockId } } }
+    );
+
+    // Delete the block master record
     await Block.deleteOne({ _id: block._id });
 
     return res.status(200).json({
@@ -352,6 +466,7 @@ exports.deleteBlock = async (req, res, next) => {
 /**
  * GET /blocks
  * Lists all indoor blocks or blocks nearby given lat/lon (10m accuracy)
+ * Also includes list of Wi-Fis covering each block
  */
 exports.getAllBlocks = async (req, res, next) => {
   try {
@@ -362,15 +477,10 @@ exports.getAllBlocks = async (req, res, next) => {
       const numLat = Number(lat);
       const numLon = Number(lon);
 
-      // Geospatial query within specified radius (default 50m, or 10m for immediate cell)
       blocks = await Block.find({
         'location.geo': {
           $near: {
-            $geometry: {
-              type: 'Point',
-              coordinates: [numLon, numLat]
-            },
-            $maxDistance: Number(radius)
+            $geometry: { type: 'Point', coordinates: [numLon, numLat] },$maxDistance: Number(radius)
           }
         }
       });
@@ -378,24 +488,39 @@ exports.getAllBlocks = async (req, res, next) => {
       blocks = await Block.find().sort({ createdAt: -1 });
     }
 
+    // Attach Wi-Fis associated with each block
+    const blockList = await Promise.all(
+      blocks.map(async (b) => {
+        const associatedWifis = await Wifi.find(
+          { 'blocks.blockId': b.blockId },
+          'ssid band width security blocks.$'
+        );
+
+        return {
+          blockId: b.blockId,
+          blockName: b.blockName,
+          location: b.location,
+          blockImage: b.blockImage,
+          scale: b.scale,
+          wifisCount: associatedWifis.length,
+          wifis: associatedWifis.map((w) => {
+            const blockInWifi = w.blocks[0];
+            return {
+              ssid: w.ssid,
+              band: w.band,
+              width: w.width,
+              security: w.security,
+              measurementsCount: blockInWifi ? blockInWifi.measurements.length : 0
+            };
+          })
+        };
+      })
+    );
+
     return res.status(200).json({
       success: true,
-      count: blocks.length,
-      blocks: blocks.map((b) => ({
-        blockId: b.blockId,
-        blockName: b.blockName,
-        location: b.location,
-        blockImage: b.blockImage,
-        scale: b.scale,
-        wifisCount: b.wifis.length,
-        wifis: b.wifis.map((w) => ({
-          ssid: w.ssid,
-          band: w.band,
-          width: w.width,
-          security: w.security,
-          measurementsCount: w.measurements.length
-        }))
-      }))
+      count: blockList.length,
+      blocks: blockList
     });
   } catch (error) {
     next(error);
@@ -404,7 +529,7 @@ exports.getAllBlocks = async (req, res, next) => {
 
 /**
  * GET /block/:blockId
- * Retrieves full details for a single block
+ * Retrieves full details for a single block, including active Wi-Fis in this block
  */
 exports.getBlockById = async (req, res, next) => {
   try {
@@ -418,9 +543,27 @@ exports.getBlockById = async (req, res, next) => {
       });
     }
 
+    // Find all Wi-Fis containing this block
+    const associatedWifis = await Wifi.find(
+      { 'blocks.blockId': blockId },
+      'ssid band width security blocks.$'
+    );
+
     return res.status(200).json({
       success: true,
-      block
+      block: {
+        ...block.toObject(),
+        wifis: associatedWifis.map((w) => {
+          const blockInWifi = w.blocks[0];
+          return {
+            ssid: w.ssid,
+            band: w.band,
+            width: w.width,
+            security: w.security,
+            measurementsCount: blockInWifi ? blockInWifi.measurements.length : 0
+          };
+        })
+      }
     });
   } catch (error) {
     next(error);
@@ -434,24 +577,36 @@ exports.getBlockById = async (req, res, next) => {
 exports.getBlockImage = async (req, res, next) => {
   try {
     const { blockId } = req.params;
-    const block = await Block.findOne({ blockId });
+    let block = await Block.findOne({ blockId });
 
-    if (!block || !block.blockImage || !block.blockImage.path) {
+    if (block?.blockImage?.url && block.blockImage.url.startsWith('https://')) {
+      return res.redirect(block.blockImage.url);
+    }
+
+    let imageUrl = block?.blockImage?.url;
+    let imagePath = block?.blockImage?.path;
+
+    if (!block) {
+      // Check in Wifi blocks
+      const wifi = await Wifi.findOne({ 'blocks.blockId': blockId });
+      const b = wifi?.blocks?.find((item) => item.blockId === blockId);
+      if (b && b.blockImage) {
+        imageUrl = b.blockImage.url;
+        imagePath = b.blockImage.path;
+      }
+    }
+
+    if (imageUrl && imageUrl.startsWith('https://')) {
+      return res.redirect(imageUrl);
+    }
+
+    if (!imagePath || !fs.existsSync(imagePath)) {
       return res.status(404).json({
         success: false,
-        message: 'Block or image not found'
+        message: 'Floor map image file not found on disk'
       });
     }
 
-    const imagePath = block.blockImage.path;
-    if (!fs.existsSync(imagePath)) {
-      return res.status(404).json({
-        success: false,
-        message: 'Image file does not exist on disk'
-      });
-    }
-
-    // Set Cache-Control and send file
     res.setHeader('Cache-Control', 'public, max-age=86400'); // 1 day
     return res.sendFile(path.resolve(imagePath));
   } catch (error) {
@@ -527,14 +682,16 @@ exports.calibrateBlock = async (req, res, next) => {
       block.scale.metersPerPixel = Number(mPerPx.toFixed(6));
       block.scale.realWidthMeters = Number(realWidthMeters);
       block.scale.isCalibrated = true;
-    } else {
-      return res.status(400).json({
-        success: false,
-        message: 'Must provide either (pointA, pointB, realDistanceMeters) OR metersPerPixel'
-      });
     }
 
     await block.save();
+
+    // Synchronize calibrated scale to all Wi-Fis containing this block
+    await Wifi.updateMany(
+      { 'blocks.blockId': block.blockId },
+      { $set: { 'blocks.$[elem].scale': block.scale } },
+      { arrayFilters: [{ 'elem.blockId': block.blockId }] }
+    );
 
     return res.status(200).json({
       success: true,

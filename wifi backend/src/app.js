@@ -9,6 +9,9 @@ const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 const app = express();
 
+// Trust reverse proxy (e.g. Render) so req.protocol is https
+app.set('trust proxy', 1);
+
 // Enable Cross-Origin Resource Sharing
 app.use(cors());
 
@@ -31,13 +34,14 @@ app.get('/', (req, res) => {
       "GET /SSID/block": "Fetch Wi-Fi heatmap matrix, stats, and floor map image (or cached status)",
       "POST /SSID/block": "Submit Wi-Fi measurement at (x,y) coordinates with signal strength (dBm)",
       "POST /createBlock": "Create a new indoor block with floor map image (multipart/form-data)",
+      "POST /addblock": "Assign an indoor block to a Wi-Fi (takes wifi ssid and indoor block id)",
+      "POST /delete": "Delete an indoor block from a Wi-Fi or globally",
       "POST /calibrateBlock": "Calibrate floor map scale (metersPerPixel) using two reference points or ratio",
       "POST /calculateDistance": "Calculate real-world distance in meters between any two points on a floor map",
-      "POST /addWifi": "Register a new Wi-Fi or update configuration in a block",
-      "POST /delete": "Delete a block and its Wi-Fi records",
       "GET /blocks": "List all blocks or search nearby within 10m radius",
       "GET /block/:blockId": "Get complete block details by ID",
-      "GET /block/:blockId/image": "Stream floor map image with HTTP 304 caching"
+      "GET /block/:blockId/image": "Stream floor map image with HTTP 304 caching",
+      "GET /wifis": "List all registered Wi-Fi networks and their assigned indoor blocks"
     }
   });
 });

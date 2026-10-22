@@ -20,8 +20,9 @@ test('Express app routes: test endpoints with native HTTP and fetch', async (t) 
     assert.ok(data.endpoints['POST /calculateDistance']);
     assert.ok(data.endpoints['GET /SSID/block']);
     assert.ok(data.endpoints['POST /SSID/block']);
-    assert.ok(data.endpoints['POST /addWifi']);
+    assert.ok(data.endpoints['POST /addblock']);
     assert.ok(data.endpoints['POST /delete']);
+    assert.ok(data.endpoints['GET /wifis']);
   });
 
   await t.test('POST /calibrateBlock should return 400 when parameters are missing', async () => {
@@ -59,16 +60,39 @@ test('Express app routes: test endpoints with native HTTP and fetch', async (t) 
     assert.strictEqual(data.message, 'Block name is required');
   });
 
-  await t.test('POST /addWifi should return 400 when SSID is missing', async () => {
-    const res = await fetch(`${baseUrl}/addWifi`, {
+  await t.test('POST /addblock should return 400 when SSID is missing', async () => {
+    const res = await fetch(`${baseUrl}/addblock`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ blockName: 'Block A' })
+      body: JSON.stringify({ blockId: 'block_123' })
     });
     assert.strictEqual(res.status, 400);
     const data = await res.json();
     assert.strictEqual(data.success, false);
     assert.strictEqual(data.message, 'SSID is required');
+  });
+
+  await t.test('POST /addblock should return 400 when block identifier is missing', async () => {
+    const res = await fetch(`${baseUrl}/addblock`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ssid: 'Office_5G' })
+    });
+    assert.strictEqual(res.status, 400);
+    const data = await res.json();
+    assert.strictEqual(data.success, false);
+    assert.strictEqual(data.message, 'Indoor block ID (blockId) is required');
+  });
+
+  await t.test('POST /SSID/block should return 400 when coordinates or strength are missing', async () => {
+    const res = await fetch(`${baseUrl}/SSID/block`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ssid: 'Office_5G' })
+    });
+    assert.strictEqual(res.status, 400);
+    const data = await res.json();
+    assert.strictEqual(data.success, false);
   });
 
   await t.test('POST /delete should return 400 when missing identifiers', async () => {
@@ -93,4 +117,3 @@ test('Express app routes: test endpoints with native HTTP and fetch', async (t) 
   // Close server
   await new Promise((resolve) => server.close(resolve));
 });
-

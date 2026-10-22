@@ -3,6 +3,7 @@ const http = require('http');
 const app = require('./src/app');
 const connectDB = require('./src/config/db');
 
+// 1. Set PORT to a number (use environment variable or default to 5000)
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
@@ -12,7 +13,8 @@ const startServer = async () => {
   // Create HTTP Server
   const server = http.createServer(app);
 
-  server.listen(PORT, () => {
+  // 2. Pass PORT as the first argument, and '0.0.0.0' as the second argument
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`===============================================`);
     console.log(`🚀 Wi-Fi Heatmap Backend running on port ${PORT}`);
     console.log(`📡 URL: http://localhost:${PORT}`);
@@ -26,5 +28,8 @@ const startServer = async () => {
   });
 };
 
-startServer();
+app.get('/', (req, res) => {
+  res.send('Wi-Fi Backend is connected and working!');
+});
 
+startServer();
