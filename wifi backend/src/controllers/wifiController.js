@@ -348,7 +348,7 @@ exports.postWifiBlockMeasurement = async (req, res, next) => {
       });
     }
 
-    // Create and push new measurement
+    // Create the measurement
     const newMeasurement = {
       x: Number(coordX),
       y: Number(coordY),
@@ -359,28 +359,45 @@ exports.postWifiBlockMeasurement = async (req, res, next) => {
       timestamp: new Date()
     };
 
-    targetBlock.measurements.push(newMeasurement);
-    targetBlock.lastUpdated = new Date();
+    // 1) Save the Wi-Fi doc only if it is new or a block was just auto-attached
+    if (wifi.isNew || wifi.isModified()) {
+      await wifi.save();
+    }
 
-    // Rebuild 2D Matrix
-    const updatedMatrix = build2DMatrix(targetBlock.measurements);
-    targetBlock.rawMatrix = updatedMatrix;
+    // 2) Atomic push: no version check, safe for concurrent taps
+    const filters = { arrayFilters: [{ 'b.blockId': targetBlock.blockId }] };
+    await Wifi.updateOne(
+      { _id: wifi._id },
+      {
+        $push: { 'blocks.$[b].measurements': newMeasurement },
+        $set: { 'blocks.$[b].lastUpdated': new Date() }
+      },
+      filters
+    );
 
-    await wifi.save();
+    // 3) Rebuild the matrix from fresh data and store it
+    const fresh = await Wifi.findById(wifi._id);
+    const freshBlock = fresh.blocks.find((b) => b.blockId === targetBlock.blockId);
+    const updatedMatrix = build2DMatrix(freshBlock.measurements);
+    await Wifi.updateOne(
+      { _id: wifi._id },
+      { $set: { 'blocks.$[b].rawMatrix': updatedMatrix } },
+      filters
+    );
 
     return res.status(201).json({
       success: true,
       message: 'Measurement recorded successfully',
       ssid: wifi.ssid,
-      blockId: targetBlock.blockId,
-      blockName: targetBlock.blockName,
+      blockId: freshBlock.blockId,
+      blockName: freshBlock.blockName,
       wifi: {
         ssid: wifi.ssid,
         band: wifi.band,
         security: wifi.security,
         estDistance: resolvedEstDistance,
         lastMeasurement: newMeasurement,
-        totalMeasurements: targetBlock.measurements.length,
+        totalMeasurements: freshBlock.measurements.length,
         matrix: updatedMatrix
       }
     });
