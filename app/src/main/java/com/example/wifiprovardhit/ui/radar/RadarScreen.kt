@@ -26,6 +26,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -67,6 +68,17 @@ data class HeatmapViewState(
     val width: Int,
     val height: Int,
     val measurements: List<MeasurementItem>?
+)
+
+data class PositionPickingState(
+    val scanResult: ScanResult,
+    val block: IndoorBlock,
+    val imageUrl: String,
+    val matrix: List<List<Any?>>,
+    val rows: Int,
+    val cols: Int,
+    val width: Int,
+    val height: Int
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -154,8 +166,7 @@ fun RadarScreen(
     val wifiBlockAssignments = remember { mutableStateMapOf<String, MutableList<String>>() }
     var showAddBlockDialog by remember { mutableStateOf(false) }
     var heatmapViewState by remember { mutableStateOf<HeatmapViewState?>(null) }
-    var blockForPositionPicking by remember { mutableStateOf<IndoorBlock?>(null) }
-    var scanResultForPositionPicking by remember { mutableStateOf<ScanResult?>(null) }
+    var positionPickingState by remember { mutableStateOf<PositionPickingState?>(null) }
     var pickedPositionMessage by remember { mutableStateOf<String?>(null) }
 
     val filteredList = uiState.scanResults.filter { result ->
@@ -646,7 +657,7 @@ fun RadarScreen(
             )
         }
 
-        // Heatmap View Dialog (Layer 0: Block image, Layer 1: Heatmap overlay with 50% opacity, nulls transparent)
+        // Heatmap View Dialog (Layer 0: Block image, Layer 1: Heatmap overlay with 50% opacity, nulls solid black)
         heatmapViewState?.let { state ->
             val aspectRatio = if (state.height > 0) state.width.toFloat() / state.height.toFloat() else 1f
 
@@ -687,19 +698,21 @@ fun RadarScreen(
                                 for (r in 0 until rows) {
                                     for (c in 0 until cols) {
                                         val cellVal = state.matrix.getOrNull(r)?.getOrNull(c)
-                                        if (cellVal != null && cellVal is Number) {
+                                        val cellColor = if (cellVal != null && cellVal is Number) {
                                             val rssi = cellVal.toDouble().toInt()
                                             val clamped = rssi.coerceIn(-90, -40)
                                             val fraction = (clamped - (-90)) / (-40 - (-90)).toFloat()
                                             val hue = fraction * 120f
-                                            val cellColor = Color.hsl(hue, 0.85f, 0.5f)
-
-                                            drawRect(
-                                                color = cellColor,
-                                                topLeft = androidx.compose.ui.geometry.Offset(c * cellWidth, r * cellHeight),
-                                                size = Size(cellWidth, cellHeight)
-                                            )
+                                            Color.hsl(hue, 0.85f, 0.5f)
+                                        } else {
+                                            Color.Black
                                         }
+
+                                        drawRect(
+                                            color = cellColor,
+                                            topLeft = androidx.compose.ui.geometry.Offset(c * cellWidth, r * cellHeight),
+                                            size = Size(cellWidth, cellHeight)
+                                        )
                                     }
                                 }
                             }
@@ -707,11 +720,18 @@ fun RadarScreen(
 
                         Button(
                             onClick = {
-                                val scan = state.scanResult
-                                val block = state.block
+                                val stateCopy = state
                                 heatmapViewState = null
-                                scanResultForPositionPicking = scan
-                                blockForPositionPicking = block
+                                positionPickingState = PositionPickingState(
+                                    scanResult = stateCopy.scanResult,
+                                    block = stateCopy.block,
+                                    imageUrl = stateCopy.imageUrl,
+                                    matrix = stateCopy.matrix,
+                                    rows = stateCopy.rows,
+                                    cols = stateCopy.cols,
+                                    width = stateCopy.width,
+                                    height = stateCopy.height
+                                )
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -831,58 +851,50 @@ fun RadarScreen(
             )
         }
 
-        // 4. Position Picker Dialog
-        if (blockForPositionPicking != null && scanResultForPositionPicking != null) {
-            val block = blockForPositionPicking!!
-            val scan = scanResultForPositionPicking!!
+        // 4. Position Picker Dialog with Grid Outlines Only (No Heatmap Colors)
+        positionPickingState?.let { state ->
+            val aspectRatio = if (state.height > 0) state.width.toFloat() / state.height.toFloat() else 1f
 
             AlertDialog(
                 onDismissRequest = {
-                    blockForPositionPicking = null
-                    scanResultForPositionPicking = null
+                    positionPickingState = null
                     pickedPositionMessage = null
                 },
-                title = { Text("Pick Position in ${block.name}") },
+                title = { Text("Pick Position in ${state.block.name}") },
                 text = {
-                    var imgSize by remember(block.id) { mutableStateOf<Size?>(null) }
-
                     Column(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            "Tap on the floor plan to measure signal for ${scan.SSID.ifEmpty { "Hidden" }}:",
+                            "Tap on the floor plan to measure signal for ${state.scanResult.SSID.ifEmpty { "Hidden" }}:",
                             style = MaterialTheme.typography.bodySmall
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
 
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .then(
-                                    imgSize?.let { Modifier.aspectRatio(it.width / it.height) }
-                                        ?: Modifier.height(250.dp)
-                                )
+                                .aspectRatio(aspectRatio)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.primaryContainer)
-                                .pointerInput(block.id, imgSize) {
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .pointerInput(state.block.id) {
                                     detectTapGestures { offset ->
-                                        val s = imgSize
-                                        val px = if (s != null) (offset.x / size.width * s.width).toInt() else offset.x.toInt()
-                                        val py = if (s != null) (offset.y / size.height * s.height).toInt() else offset.y.toInt()
-                                        val rawSsid = scan.SSID ?: "Hidden"
+                                        val px = (offset.x / size.width * state.width).toInt()
+                                        val py = (offset.y / size.height * state.height).toInt()
+                                        val rawSsid = state.scanResult.SSID ?: "Hidden"
                                         val ssid = if (rawSsid.isEmpty()) "Hidden" else rawSsid
                                         val coords = mapOf("x" to px, "y" to py)
                                         val body = mapOf<String, Any>(
                                             "ssid" to ssid,
                                             "wifiSsid" to ssid,
-                                            "location" to mapOf("lat" to block.lat, "lon" to block.lon),
-                                            "strength" to scan.level,
-                                            "band" to WifiDomainUtils.frequencyToBand(scan.frequency),
-                                            "security" to WifiDomainUtils.securityType(scan.capabilities),
-                                            "estDistance" to WifiDomainUtils.estimateDistanceMeters(scan.level),
+                                            "location" to mapOf("lat" to state.block.lat, "lon" to state.block.lon),
+                                            "strength" to state.scanResult.level,
+                                            "band" to WifiDomainUtils.frequencyToBand(state.scanResult.frequency),
+                                            "security" to WifiDomainUtils.securityType(state.scanResult.capabilities),
+                                            "estDistance" to WifiDomainUtils.estimateDistanceMeters(state.scanResult.level),
                                             "coordinates" to coords,
-                                            "blockId" to block.id
+                                            "blockId" to state.block.id
                                         )
 
                                         coroutineScope.launch(Dispatchers.IO) {
@@ -891,7 +903,7 @@ fun RadarScreen(
                                                 val err = if (!response.isSuccessful) response.errorBody()?.string() ?: "error" else null
                                                 withContext(Dispatchers.Main) {
                                                     pickedPositionMessage = if (response.isSuccessful)
-                                                        "Sent at image pixel ($px, $py), ${scan.level} dBm"
+                                                        "Sent at image pixel ($px, $py), ${state.scanResult.level} dBm"
                                                     else "POST failed [POST /$ssid/block] (${response.code()}): $err"
                                                 }
                                             } catch (e: Exception) {
@@ -904,23 +916,38 @@ fun RadarScreen(
                                 },
                             contentAlignment = Alignment.Center
                         ) {
+                            // Layer 0: Block Image
                             AsyncImage(
-                                model = block.imageUrl,
+                                model = state.imageUrl,
                                 contentDescription = "Floor plan",
                                 modifier = Modifier.matchParentSize(),
-                                contentScale = ContentScale.FillBounds,
-                                onSuccess = { state ->
-                                    val d = state.painter.intrinsicSize
-                                    if (d.width > 0f && d.height > 0f) imgSize = d
-                                },
-                                onError = { state ->
-                                    pickedPositionMessage = "Image failed: ${state.result.throwable.message}\nURL: ${block.imageUrl}"
-                                }
+                                contentScale = ContentScale.FillBounds
                             )
+
+                            // Grid Overlay Only (No Heatmap Colors)
+                            Canvas(
+                                modifier = Modifier.matchParentSize()
+                            ) {
+                                val rows = state.rows.takeIf { it > 0 } ?: 50
+                                val cols = state.cols.takeIf { it > 0 } ?: 50
+                                val cellWidth = size.width / cols
+                                val cellHeight = size.height / rows
+
+                                for (r in 0 until rows) {
+                                    for (c in 0 until cols) {
+                                        drawRect(
+                                            color = Color.White.copy(alpha = 0.4f),
+                                            topLeft = androidx.compose.ui.geometry.Offset(c * cellWidth, r * cellHeight),
+                                            size = Size(cellWidth, cellHeight),
+                                            style = Stroke(width = 1f)
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         if (pickedPositionMessage != null) {
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = pickedPositionMessage!!,
                                 style = MaterialTheme.typography.bodySmall,
@@ -931,8 +958,7 @@ fun RadarScreen(
                 },
                 confirmButton = {
                     Button(onClick = {
-                        blockForPositionPicking = null
-                        scanResultForPositionPicking = null
+                        positionPickingState = null
                         pickedPositionMessage = null
                     }) {
                         Text("Done")

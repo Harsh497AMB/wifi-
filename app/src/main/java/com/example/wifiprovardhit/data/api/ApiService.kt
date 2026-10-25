@@ -121,7 +121,7 @@ interface ApiService {
         @Body body: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
-    @POST("SSID/block")
+    @POST("{ssid}/block")
     suspend fun postWifiBlockMeasurementPath(
         @Path("ssid") ssid: String,
         @Body body: Map<String, @JvmSuppressWildcards Any>
