@@ -22,6 +22,39 @@ data class ServerBlockItem(
 data class ServerLocation(val lat: Double, val lon: Double)
 data class ServerBlockImage(val url: String?, val filename: String?)
 
+data class WifiBlockServerResponse(
+    val success: Boolean,
+    val wifi: WifiData?,
+    val block: BlockData?
+)
+
+data class WifiData(
+    val ssid: String,
+    val rows: Int? = null,
+    val cols: Int? = null,
+    val matrix: List<List<Any?>>? = null,
+    val measurements: List<MeasurementItem>? = null
+)
+
+data class BlockData(
+    val blockId: String,
+    val blockName: String,
+    val image: BlockImageDetails?
+)
+
+data class BlockImageDetails(
+    val filename: String?,
+    val url: String?,
+    val width: Int? = null,
+    val height: Int? = null
+)
+
+data class MeasurementItem(
+    val x: Double,
+    val y: Double,
+    val strength: Double
+)
+
 interface ApiService {
 
     @GET("blocks")
@@ -76,15 +109,19 @@ interface ApiService {
 
     @GET("{ssid}/block")
     suspend fun getWifiBlockPath(
-        @Path("ssid") ssid: String
-    ): Response<ResponseBody>
+        @Path("ssid") ssid: String,
+        @Query("blockId") blockId: String? = null,
+        @Query("blockName") blockName: String? = null,
+        @Query("lat") lat: Double? = null,
+        @Query("lon") lon: Double? = null
+    ): Response<WifiBlockServerResponse>
 
     @POST("SSID/block")
     suspend fun postWifiBlockMeasurement(
         @Body body: Map<String, @JvmSuppressWildcards Any>
     ): Response<ResponseBody>
 
-    @POST("{ssid}/block")
+    @POST("SSID/block")
     suspend fun postWifiBlockMeasurementPath(
         @Path("ssid") ssid: String,
         @Body body: Map<String, @JvmSuppressWildcards Any>
