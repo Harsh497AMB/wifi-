@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">Wi-Fi Dead Zone Mapper</string>
+    <string name="tab_radar">Radar</string>
+    <string name="tab_heatmap">Heatmap</string>
+    <string name="placeholder_radar">AP Radar Screen</string>
+    <string name="placeholder_heatmap">Floor Plan Heatmap Screen</string>
+    <string name="create_block">Create Block</string>
+    <string name="block_name">Block Name</string>
+    <string name="block_image_url">Block Image URL / Path</string>
+    <string name="latitude">Latitude</string>
+    <string name="longitude">Longitude</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="add_block">Add Block</string>
+    <string name="block_id">Block ID / Unique ID</string>
+    <string name="select_cached_block">Select Cached Block</string>
+    <string name="wifi_blocks_title">Associated Indoor Blocks</string>
+    <string name="delete_block">Delete Block</string>
+    <string name="pick_position">Pick Position on Floor Plan</string>
+    <string name="heatmap_error">Failed to load floor plan image or heatmap data</string>
+    <string name="matrix_heatmap_title">Signal Heatmap Matrix</string>
+</resources>
