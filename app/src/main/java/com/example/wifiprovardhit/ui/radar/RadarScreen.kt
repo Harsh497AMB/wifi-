@@ -149,6 +149,7 @@ fun RadarScreen(
     }
 
     var showCreateBlockDialog by remember { mutableStateOf(false) }
+    var targetSsidForNewBlock by remember { mutableStateOf<String?>(null) }
     var newBlockName by remember { mutableStateOf("") }
     var newBlockLat by remember { mutableStateOf("37.4219983") }
     var newBlockLon by remember { mutableStateOf("-122.084") }
@@ -194,7 +195,10 @@ fun RadarScreen(
             TopAppBar(
                 title = { Text("Wi-Fi AP Radar") },
                 actions = {
-                    IconButton(onClick = { showCreateBlockDialog = true }) {
+                    IconButton(onClick = {
+                        targetSsidForNewBlock = null
+                        showCreateBlockDialog = true
+                    }) {
                         Icon(Icons.Default.Add, contentDescription = "Create Block")
                     }
                     IconButton(onClick = { viewModel.refresh() }) {
@@ -366,11 +370,14 @@ fun RadarScreen(
             }
         }
 
-        // 1. Create Block Dialog
+        // 1. Create Block Dialog (with optional auto-assign to targetSsidForNewBlock)
         if (showCreateBlockDialog) {
             AlertDialog(
-                onDismissRequest = { showCreateBlockDialog = false },
-                title = { Text("Create New Block (/createBlock)") },
+                onDismissRequest = {
+                    showCreateBlockDialog = false
+                    targetSsidForNewBlock = null
+                },
+                title = { Text(if (targetSsidForNewBlock != null) "Create & Assign Block to $targetSsidForNewBlock" else "Create New Block (/createBlock)") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
@@ -412,8 +419,10 @@ fun RadarScreen(
                             val latStr = newBlockLat
                             val lonStr = newBlockLon
                             val uri = selectedImageUriForCreate!!
+                            val targetSsid = targetSsidForNewBlock
 
                             showCreateBlockDialog = false
+                            targetSsidForNewBlock = null
 
                             coroutineScope.launch(Dispatchers.IO) {
                                 try {
@@ -433,6 +442,32 @@ fun RadarScreen(
                                         if (response.isSuccessful) {
                                             apiStatusMessage = "POST /createBlock successful!"
                                             fetchBlocks()
+
+                                            if (targetSsid != null) {
+                                                val bodyStr = response.body()?.string() ?: "{}"
+                                                val json = JSONObject(bodyStr)
+                                                val blockObj = json.optJSONObject("block")
+                                                val newBlockId = blockObj?.optString("blockId") ?: cachedBlocks.lastOrNull()?.id
+
+                                                if (!newBlockId.isNullOrEmpty()) {
+                                                    val assignedList = wifiBlockAssignments.getOrPut(targetSsid) { mutableStateListOf() }
+                                                    if (!assignedList.contains(newBlockId)) {
+                                                        assignedList.add(newBlockId)
+                                                    }
+                                                    coroutineScope.launch(Dispatchers.IO) {
+                                                        try {
+                                                            ApiClient.instance.addBlock(
+                                                                mapOf<String, Any>(
+                                                                    "ssid" to targetSsid,
+                                                                    "wifiSsid" to targetSsid,
+                                                                    "blockId" to newBlockId
+                                                                )
+                                                            )
+                                                        } catch (_: Exception) {}
+                                                    }
+                                                }
+                                            }
+
                                             newBlockName = ""
                                             newBlockLat = "37.4219983"
                                             newBlockLon = "-122.084"
@@ -450,11 +485,14 @@ fun RadarScreen(
                             }
                         }
                     ) {
-                        Text("Create")
+                        Text(if (targetSsidForNewBlock != null) "Create & Assign" else "Create")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showCreateBlockDialog = false }) {
+                    TextButton(onClick = {
+                        showCreateBlockDialog = false
+                        targetSsidForNewBlock = null
+                    }) {
                         Text("Cancel")
                     }
                 }
@@ -657,7 +695,7 @@ fun RadarScreen(
             )
         }
 
-        // Heatmap View Dialog (Layer 0: Block image, Layer 1: Heatmap overlay with 50% opacity, nulls solid black)
+        // Heatmap View Dialog
         heatmapViewState?.let { state ->
             val aspectRatio = if (state.height > 0) state.width.toFloat() / state.height.toFloat() else 1f
 
@@ -835,11 +873,12 @@ fun RadarScreen(
                         Button(
                             onClick = {
                                 showAddBlockDialog = false
+                                targetSsidForNewBlock = ssidKey
                                 showCreateBlockDialog = true
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("+ Create New Block")
+                            Text("+ Create New Block & Assign")
                         }
                     }
                 },
@@ -851,7 +890,7 @@ fun RadarScreen(
             )
         }
 
-        // 4. Position Picker Dialog with Grid Outlines Only (No Heatmap Colors)
+        // 4. Position Picker Dialog
         positionPickingState?.let { state ->
             val aspectRatio = if (state.height > 0) state.width.toFloat() / state.height.toFloat() else 1f
 
@@ -916,7 +955,6 @@ fun RadarScreen(
                                 },
                             contentAlignment = Alignment.Center
                         ) {
-                            // Layer 0: Block Image
                             AsyncImage(
                                 model = state.imageUrl,
                                 contentDescription = "Floor plan",
@@ -924,7 +962,6 @@ fun RadarScreen(
                                 contentScale = ContentScale.FillBounds
                             )
 
-                            // Grid Overlay Only (No Heatmap Colors)
                             Canvas(
                                 modifier = Modifier.matchParentSize()
                             ) {
