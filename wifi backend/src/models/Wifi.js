@@ -76,7 +76,9 @@ const IndoorBlockSchema = new mongoose.Schema({
     originalName: { type: String },
     mimetype: { type: String },
     size: { type: Number },
-    url: { type: String }
+    url: { type: String },
+    imageWidth:  { type: Number, default: null },
+    imageHeight: { type: Number, default: null }
   },
   scale: {
     metersPerPixel: {

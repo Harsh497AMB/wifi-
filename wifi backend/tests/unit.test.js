@@ -26,22 +26,31 @@ test('locationHelper: 10m grid key and distance calculation', () => {
   assert.notStrictEqual(key1, keyFar, 'Far locations should have different grid keys');
 });
 
-test('matrixHelper: builds 2D matrix from sparse coordinates', () => {
+test('matrixHelper: bins image-pixel coordinates and averages taps in the same cell', () => {
   const measurements = [
     { x: 0, y: 0, strength: -45 },
-    { x: 2, y: 1, strength: -70 },
-    { x: 4, y: 3, strength: -85 }
+    { x: 21, y: 10, strength: -70 },
+    { x: 29, y: 19, strength: -80 },
+    { x: 99, y: 99, strength: -85 }
   ];
 
-  const matrix = build2DMatrix(measurements, 5, 5);
+  const { matrix, rows, cols } = build2DMatrix(measurements, 100, 100, 10);
 
   assert.strictEqual(Array.isArray(matrix), true);
-  assert.strictEqual(matrix.length >= 4, true);
-  // Matrix is rows (y) x cols (x)
+  assert.strictEqual(rows, 10);
+  assert.strictEqual(cols, 10);
   assert.strictEqual(matrix[0][0], -45);
-  assert.strictEqual(matrix[1][2], -70);
-  assert.strictEqual(matrix[3][4], -85);
+  assert.strictEqual(matrix[1][2], -75);
+  assert.strictEqual(matrix[9][9], -85);
   assert.strictEqual(matrix[2][2], null);
+});
+
+test('matrixHelper: returns an all-null matrix with no measurements', () => {
+  const { matrix, rows, cols } = build2DMatrix([], 600, 300);
+
+  assert.strictEqual(rows, 25);
+  assert.strictEqual(cols, 50);
+  assert.ok(matrix.every((row) => row.every((cell) => cell === null)));
 });
 
 const {

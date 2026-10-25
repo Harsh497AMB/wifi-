@@ -76,7 +76,7 @@ async function resolveWifiBlock(wifi, { blockId, blockName, lat, lon }, autoAtta
           gridKey: masterBlock.location.gridKey,
           geo: masterBlock.location.geo
         },
-        blockImage: masterBlock.blockImage,
+        blockImage: masterBlock.blockImage.toObject ? masterBlock.blockImage.toObject() : { ...masterBlock.blockImage },
         scale: masterBlock.scale,
         measurements: [],
         rawMatrix: [],
@@ -98,10 +98,11 @@ async function resolveWifiBlock(wifi, { blockId, blockName, lat, lon }, autoAtta
 exports.getWifiBlock = async (req, res, next) => {
   try {
     const ssid = req.params.ssid || req.query.ssid;
-    const blockId = req.query.blockId || req.headers['x-block-id'];
+    const blockId = req.params.blockId || req.query.blockId || req.headers['x-block-id'];
     const blockName = req.query.blockName;
     const lat = req.query.lat;
     const lon = req.query.lon;
+    const lite = req.query.lite === 'true';
 
     if (!ssid) {
       return res.status(400).json({
@@ -137,10 +138,17 @@ exports.getWifiBlock = async (req, res, next) => {
       });
     }
 
-    // Determine client cache status for floor map image:
-    // 1. Client can pass ?hasImage=true/false
-    // 2. Client can send header 'If-None-Match' matching the image filename/etag
-    // 3. Client can send query ?includeImage=true
+    // Validate image dimensions are present
+    const imageWidth = targetBlock.blockImage?.imageWidth;
+    const imageHeight = targetBlock.blockImage?.imageHeight;
+    if (!imageWidth || !imageHeight) {
+      return res.status(400).json({
+        success: false,
+        message: 'Block has no image size. Delete and recreate it.'
+      });
+    }
+
+    // Determine client cache status for floor map image
     const clientHasImage =
       req.query.hasImage === 'true' ||
       req.headers['x-has-image'] === 'true' ||
@@ -151,10 +159,12 @@ exports.getWifiBlock = async (req, res, next) => {
     const shouldSendImageData = !clientHasImage || includeImageExplicit;
 
     let floorImageData = null;
-    if (shouldSendImageData && targetBlock.blockImage && targetBlock.blockImage.path && !(targetBlock.blockImage.url || '').startsWith('https://')) {
-      if (targetBlock.blockImage.url && targetBlock.blockImage.url.startsWith('https://')) {
-        floorImageData = targetBlock.blockImage.url;
-      } else if (targetBlock.blockImage.path) {
+    if (
+      shouldSendImageData &&
+      targetBlock.blockImage?.path &&
+      !(targetBlock.blockImage.url || '').startsWith('https://')
+    ) {
+      if (targetBlock.blockImage.path) {
         try {
           if (fs.existsSync(targetBlock.blockImage.path)) {
             const fileBuffer = fs.readFileSync(targetBlock.blockImage.path);
@@ -169,8 +179,8 @@ exports.getWifiBlock = async (req, res, next) => {
       }
     }
 
-    // Generate 2D Matrix from coordinate measurements
-    const matrix = build2DMatrix(targetBlock.measurements);
+    // Build 2D Matrix from measurements using image-pixel coordinates
+    const { matrix, rows, cols } = build2DMatrix(targetBlock.measurements, imageWidth, imageHeight);
 
     // Compute basic heatmap statistics
     let minStrength = null;
@@ -198,16 +208,16 @@ exports.getWifiBlock = async (req, res, next) => {
         security: wifi.security,
         estDistance: targetBlock.measurements[targetBlock.measurements.length - 1]?.estDistance ?? null,
         lastUpdated: targetBlock.lastUpdated,
+        rows,
+        cols,
         stats: {
           totalPoints: targetBlock.measurements.length,
           minStrengthDbm: minStrength,
           maxStrengthDbm: maxStrength,
           avgStrengthDbm: avgStrength
         },
-        // 2D matrix of signal strengths (dBm)
-        matrix: matrix,
-        // Raw coordinate measurements
-        measurements: targetBlock.measurements
+        matrix,
+        ...(lite ? {} : { measurements: targetBlock.measurements })
       },
       block: {
         blockId: targetBlock.blockId,
@@ -221,8 +231,10 @@ exports.getWifiBlock = async (req, res, next) => {
         image: {
           filename: targetBlock.blockImage?.filename,
           url: targetBlock.blockImage?.url,
+          width: imageWidth,
+          height: imageHeight,
           isCachedOnClient: clientHasImage,
-          floorImage: floorImageData // sent if not cached on client
+          floorImage: floorImageData
         }
       }
     });
@@ -375,30 +387,19 @@ exports.postWifiBlockMeasurement = async (req, res, next) => {
       filters
     );
 
-    // 3) Rebuild the matrix from fresh data and store it
-    const fresh = await Wifi.findById(wifi._id);
-    const freshBlock = fresh.blocks.find((b) => b.blockId === targetBlock.blockId);
-    const updatedMatrix = build2DMatrix(freshBlock.measurements);
-    await Wifi.updateOne(
-      { _id: wifi._id },
-      { $set: { 'blocks.$[b].rawMatrix': updatedMatrix } },
-      filters
-    );
-
     return res.status(201).json({
       success: true,
       message: 'Measurement recorded successfully',
       ssid: wifi.ssid,
-      blockId: freshBlock.blockId,
-      blockName: freshBlock.blockName,
+      blockId: targetBlock.blockId,
+      blockName: targetBlock.blockName,
       wifi: {
         ssid: wifi.ssid,
         band: wifi.band,
         security: wifi.security,
         estDistance: resolvedEstDistance,
         lastMeasurement: newMeasurement,
-        totalMeasurements: freshBlock.measurements.length,
-        matrix: updatedMatrix
+        totalMeasurements: targetBlock.measurements.length + 1
       }
     });
   } catch (error) {

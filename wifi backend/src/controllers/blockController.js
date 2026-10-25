@@ -124,7 +124,9 @@ exports.createBlock = async (req, res, next) => {
         originalName: req.file.originalname,
         mimetype: req.file.mimetype,
         size: req.file.size,
-        url: imageUrl
+        url: imageUrl,
+        imageWidth: uploaded.width ?? null,
+        imageHeight: uploaded.height ?? null
       },
       scale: blockScale
     });
@@ -288,7 +290,7 @@ exports.addBlock = async (req, res, next) => {
         gridKey: block.location.gridKey,
         geo: block.location.geo
       },
-      blockImage: block.blockImage,
+      blockImage: block.blockImage.toObject ? block.blockImage.toObject() : { ...block.blockImage },
       scale: block.scale,
       measurements: [],
       rawMatrix: [],

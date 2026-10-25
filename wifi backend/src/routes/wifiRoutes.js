@@ -9,7 +9,9 @@ const {
 
 // Handles both dynamic route param: /:ssid/block (e.g. /Office_5G/block)
 // AND literal route: /SSID/block (with ssid in query or body)
+// AND path-param block id: /:ssid/block/:blockId
 router.get('/SSID/block', getWifiBlock);
+router.get('/:ssid/block/:blockId', getWifiBlock);
 router.get('/:ssid/block', getWifiBlock);
 
 router.post('/SSID/block', postWifiBlockMeasurement);
